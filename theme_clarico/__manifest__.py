@@ -8,7 +8,7 @@
 
     # Dependencies
     'depends': [
-            'website',     
+  #          'website',     
             'clarico_attribute_filter',
          	'clarico_latest_blog',
             'clarico_brand',
