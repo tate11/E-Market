@@ -27,16 +27,19 @@ odoo.define('payment.acquirer.midtrans', function(require)
 
     function attach_event_listener(selector)
     {
+        
+        var payment_form = $('.o_payment_form');
+        if(!payment_form.find('i').length)
+            payment_form.append('<i class="fa fa-spinner fa-spin"/>');
+            payment_form.attr('disabled','disabled');
+
+        var acquirer_id = payment_form.find('input[type="radio"][data-provider="midtrans"]:checked').data('acquirer-id');
+        if (! acquirer_id) {
+            return false;
+        }        
+        
         var $btn = $(selector),
             $form = $btn.parents('form'),
-            $payment_form = $btn.('.o_payment_form'),
-            acquirer_id = $payment_form.find('[type="radio"][data-provider="Midtrans"]:checked').data('acquirer-id');
-
-        if (!acquirer_id)
-        {
-            alert('payment_midtrans got invalid acquirer_id');
-            return;
-        }
 
         $btn.on('click', function(event)
         {
