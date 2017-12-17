@@ -30,7 +30,7 @@ odoo.define('payment.acquirer.midtrans', function(require)
         var $btn = $(selector),
             $form = $btn.parents('form'),
             $payment_form = $btn.('.o_payment_form'),
-            acquirer_id = $payment_form.find('input[type="radio"][data-provider="Midtrans"]:checked').data('acquirer-id');
+            acquirer_id = $payment_form.find('[type="radio"][data-provider="Midtrans"]:checked').data('acquirer-id');
 
         if (!acquirer_id)
         {
