@@ -29,8 +29,8 @@ odoo.define('payment.acquirer.midtrans', function(require)
     {
         var $btn = $(selector),
             $form = $btn.parents('form'),
-            $acquirer = $btn.closest('div.oe_sale_acquirer_button,div.oe_quote_acquirer_button,div.o_website_payment_new_payment'),
-            acquirer_id = $acquirer.data('id') || $acquirer.data('acquirer_id');
+            $payment_form = $btn.('.o_payment_form'),
+            acquirer_id = $payment_form.find('input[type="radio"][data-provider="stripe"]:checked').data('acquirer-id');
 
         if (!acquirer_id)
         {
