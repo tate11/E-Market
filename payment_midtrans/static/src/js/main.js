@@ -1,152 +1,100 @@
-odoo.define('payment.acquirer.midtrans', function(require)
-{
+odoo.define('payment.acquirer.midtrans', function(require) {
     "use strict";
 
-    var session = require('web.session');
+    // The following currencies are integer only, see
+    // https://stripe.com/docs/currencies#zero-decimal
+    var int_currencies = [
+        'BIF', 'XAF', 'XPF', 'CLP', 'KMF', 'DJF', 'GNF', 'JPY', 'MGA', 'PYG',
+        'RWF', 'KRW', 'VUV', 'VND', 'XOF'
+    ];
 
-    function set_state_busy($el, is_busy)
-    {
-        var $spin = $el.find('i.fa-spinner');
-        if (is_busy)
-        {
-            $el.attr('disabled', 'disabled');
-            $spin.removeClass('hidden');
-        }
-        else
-        {
-            $el.removeAttr('disabled');
-            $spin.addClass('hidden');
-        }
+    if ($.blockUI) {
+        // our message needs to appear above the modal dialog
+        $.blockUI.defaults.baseZ = 2147483647; //same z-index as StripeCheckout
+        $.blockUI.defaults.css.border = '0';
+        $.blockUI.defaults.css["background-color"] = '';
+        $.blockUI.defaults.overlayCSS["opacity"] = '0.9';
     }
 
-    function get_form_data($el)
-    {
-        return $el.serializeArray().reduce(
-                function(m,e){m[e.name] = e.value; return m;}, {});
+    require('web.dom_ready');
+    if (!$('.o_payment_form').length) {
+        return $.Deferred().reject("DOM doesn't contain '.o_payment_form'");
     }
 
-    function attach_event_listener(selector)
-    {
-        
-        var $btn = $(selector),
-            $form = $btn.parents('form'),
-            $acquirer = $btn.closest('form.o_payment_form').find('input[type="radio"][data-provider="midtrans"]:checked'),
-            acquirer_id = $acquirer.data('acquirer-id');
+    var observer = new MutationObserver(function(mutations, observer) {
+        for(var i=0; i<mutations.length; ++i) {
+            for(var j=0; j<mutations[i].addedNodes.length; ++j) {
+                if(mutations[i].addedNodes[j].tagName.toLowerCase() === "form" && mutations[i].addedNodes[j].getAttribute('provider') == 'midtrans') {
+                    display_midtrans_form($(mutations[i].addedNodes[j]));
+                }
+            }
+        }
+    });
 
-        if (!acquirer_id)
-        {
-            alert('payment_midtrans got invalid acquirer_id');
-            return;
+
+    function display_midtrans_form(provider_form) {
+        // Open Checkout with further options
+        var payment_form = $('.o_payment_form');
+        if(!payment_form.find('i').length)
+            payment_form.append('<i class="fa fa-spinner fa-spin"/>');
+            payment_form.attr('disabled','disabled');
+
+        var acquirer_id = payment_form.find('input[type="radio"][data-provider="midtrans"]:checked').data('acquirer-id');
+        if (! acquirer_id) {
+            return false;
         }
 
-        $btn.on('click', function(event)
-        {
-            event.preventDefault();
-            event.stopPropagation();
-            set_state_busy($btn, true);
-            
-            var promise,
-                formData = get_form_data($form);
+        var access_token = $("input[name='access_token']").val() || $("input[name='token']").val();
+        var so_id = $("input[name='return_url']").val().match(/quote\/([0-9]+)/) || undefined;
+        if (so_id) {
+            so_id = parseInt(so_id[1]);
+        }
 
-            if ($('.o_website_payment').length !== 0)
-            {
-                promise = session.rpc(
-                    '/website_payment/transaction',
-                    {
-                        reference: formData['reference'],
-                        amount: formData['amount'],
-                        currency_id: formData['currency_id'],
-                        acquirer_id: acquirer_id,
-                    })
 
-                    .then(function()
-                    {
-                        return formData;
-                    });
+        var currency = $("input[name='currency']").val();
+        var currency_id = $("input[name='currency_id']").val();
+        var amount = parseFloat($("input[name='amount']").val() || '0.0');
+
+
+        if ($('.o_website_payment').length !== 0) {
+            var create_tx = ajax.jsonRpc('/website_payment/transaction', 'call', {
+                    reference: $("input[name='invoice_num']").val(),
+                    amount: amount, // exact amount, not stripe cents
+                    currency_id: currency_id,
+                    acquirer_id: acquirer_id
+            });
+        }
+        else if ($('.o_website_quote').length !== 0) {
+            var url = _.str.sprintf("/quote/%s/transaction/", so_id);
+            var create_tx = ajax.jsonRpc(url, 'call', {
+                access_token: access_token,
+                acquirer_id: acquirer_id
+            }).then(function (data) {
+                try { provider_form[0].innerHTML = data; } catch (e) {};
+            });
+        }
+        else {
+            var create_tx = ajax.jsonRpc('/shop/payment/transaction/' + acquirer_id, 'call', {
+                    so_id: so_id,
+                    access_token: access_token,
+                    acquirer_id: acquirer_id
+            }).then(function (data) {
+                try { provider_form.innerHTML = data; } catch (e) {};
+            });
+        }
+        create_tx.done(function () {
+            if (!_.contains(int_currencies, currency)) {
+                amount = amount*100;
             }
-            else
-            {
-                promise = session.rpc(
-                    '/shop/payment/transaction/' + acquirer_id,
-                    {
-                        so_id: formData['order_id'],
-                    },
-                    {'async': false})
-
-                    .then(function(html)
-                    {
-                        return get_form_data($(html));
-                    });
-            }
-
-            promise
-                .then(function(data)
-                {
-                    data['acquirer_id'] = acquirer_id;
-                    return session.rpc('/midtrans/get_token', data);
-                })
-                .then(function(response)
-                {
-                    if (response.snap_errors)
-                    {
-                        alert(response.snap_errors.join('\n'));
-                        set_state_busy($btn, false);
-                        return;
-                    }
-
-                    snap.pay(response.snap_token,
-                    {
-                        onSuccess: function(result)
-                        {
-                            session.rpc('/midtrans/validate', {
-                                reference: result.order_id,
-                                transaction_status: 'done',
-                                message: result.status_message,
-
-                            }).then(function()
-                            {
-                                window.location = response.return_url;
-                            });
-                        },
-                        onPending: function(result)
-                        {
-                            session.rpc('/midtrans/validate', {
-                                reference: result.order_id,
-                                transaction_status: 'pending',
-                                message: result.status_message,
-
-                            }).then(function()
-                            {
-                                window.location = response.return_url;
-                            });
-                        },
-                        onError: function(result)
-                        {
-                            session.rpc('/midtrans/validate', {
-                                reference: result.order_id,
-                                transaction_status: 'error',
-                                message: result.status_message,
-
-                            }).then(function()
-                            {
-                                window.location = response.return_url;
-                            });
-                        },
-                        onClose: function()
-                        {
-                            set_state_busy($btn, false);
-                        },
-                    });
-                },
-                function(error)
-                {
-                    set_state_busy($btn, false);
-                    console.log(error);
-                });
+            getStripeHandler().open({
+                name: $("input[name='merchant']").val(),
+                description: $("input[name='invoice_num']").val(),
+                email: $("input[name='email']").val(),
+                currency: currency,
+                amount: amount,
+            });
         });
     }
 
-    odoo.payment_midtrans = {
-        attach: attach_event_listener,
-    };
-});
+}
+);
